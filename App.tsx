@@ -5,8 +5,16 @@ import { DEFAULT_CATEGORIES } from './constants';
 import { fetchProductsFromSheet, fetchUsersFromSheet, submitOrderToSheet, fetchNewsFromSheet } from './services/sheetService';
 import Navigation from './components/Navigation';
 
-// 使用環境變數，若未設定則回退至預設網址 (方便開發)
-const GOOGLE_SHEET_API_URL = (import.meta as any).env?.VITE_GOOGLE_SHEET_API_URL || "https://script.google.com/macros/s/AKfycbyHeGPTjPuwOSFg-VVkksSoRZIZUnD_IMBDfbTVlPpGpvoMXvrgvhPzf_xn4-U-xafL8Q/exec";
+// 安全地獲取 API URL
+const getApiUrl = () => {
+  try {
+    const envUrl = (import.meta as any).env?.VITE_GOOGLE_SHEET_API_URL;
+    if (envUrl) return envUrl;
+  } catch (e) {}
+  return "https://script.google.com/macros/s/AKfycbyHeGPTjPuwOSFg-VVkksSoRZIZUnD_IMBDfbTVlPpGpvoMXvrgvhPzf_xn4-U-xafL8Q/exec";
+};
+
+const GOOGLE_SHEET_API_URL = getApiUrl();
 
 const App: React.FC = () => {
   const [isInitializing, setIsInitializing] = useState(true);
@@ -39,7 +47,6 @@ const App: React.FC = () => {
         localStorage.removeItem('franchise_user');
       }
     }
-    // 延遲一點點時間移除初始化狀態，確保視覺平滑
     setTimeout(() => setIsInitializing(false), 800);
   }, []);
 
@@ -62,7 +69,7 @@ const App: React.FC = () => {
 
         if (newsData) setNews(newsData);
       } catch (err) {
-        console.error("資料載入失敗，請確認 API 連線。");
+        console.error("資料載入失敗");
       } finally {
         setIsLoading(false);
         setIsLoadingNews(false);
@@ -86,7 +93,7 @@ const App: React.FC = () => {
         setLoginError('帳號或密碼錯誤');
       }
     } catch (err) {
-      setLoginError('系統連線異常，請聯繫管理員');
+      setLoginError('系統連線異常');
     } finally {
       setIsLoggingIn(false);
     }
@@ -145,10 +152,10 @@ const App: React.FC = () => {
         setCurrentView('orders');
         alert('訂單已成功送出！');
       } else {
-        alert('訂單同步失敗，請確認網路連線。');
+        alert('訂單同步失敗');
       }
     } catch (err) {
-      alert('下單過程發生錯誤。');
+      alert('發生錯誤');
     } finally {
       setIsSubmitting(false);
     }
@@ -186,14 +193,13 @@ const App: React.FC = () => {
   const cartTotal = cart.reduce((acc, i) => acc + i.price * i.quantity, 0);
   const cartItemCount = cart.reduce((acc, i) => acc + i.quantity, 0);
 
-  // 輔助函式：將日期字串格式化為 YYYY/MM/DD
+  // 輔助函式：僅保留年月日
   const formatDate = (dateStr: string) => {
     if (!dateStr) return "";
-    // 優先切除 ISO 格式的 T 或是空格後的時間
+    // 處理 GAS 傳回的日期字串，分割掉時間部分
     return dateStr.split('T')[0].split(' ')[0];
   };
 
-  // 初始化啟動畫面
   if (isInitializing) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#FDFBF7]">
