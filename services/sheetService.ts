@@ -102,11 +102,10 @@ export const submitOrderToSheet = async (apiUrl: string, order: Order, franchise
     
     const payload = {
       action: 'submitOrder',
-      orderId: order.id,
+      order: order.id, // 關鍵修正：將 orderId 改為 order 以對應試算表表頭
       date: new Date().toLocaleString('zh-TW'),
       franchiseName: franchiseName,
       items: itemsSummary,
-      // 根據用戶要求：總金額不用輸出，因此移除 total 欄位
       status: order.status
     };
 
