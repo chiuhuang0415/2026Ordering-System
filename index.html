@@ -1,15 +1,46 @@
+
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>加盟商下單系統 | Franchise Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>大葛格鹹水雞 | 加盟下單系統</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <meta name="theme-color" content="#8B7355">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
     <style>
         body {
             font-family: 'Inter', 'Noto Sans TC', sans-serif;
             -webkit-tap-highlight-color: transparent;
+            background-color: #FDFBF7; /* 奶茶色背景 */
+            margin: 0;
+            display: flex;
+            justify-content: center;
+        }
+        #root {
+            width: 100%;
+            max-width: 500px; /* 在桌面端限制寬度，模擬手機比例 */
+            min-height: 100vh;
+            background-color: #FDFBF7;
+            box-shadow: 0 0 40px rgba(139, 115, 85, 0.1);
+            position: relative;
+        }
+        @media (min-width: 501px) {
+            body::before {
+                content: "大葛格鹹水雞 加盟專用系統";
+                position: fixed;
+                left: 5%;
+                top: 50%;
+                transform: translateY(-50%);
+                font-size: 2rem;
+                font-weight: 900;
+                color: #8B7355;
+                opacity: 0.2;
+                writing-mode: vertical-rl;
+                letter-spacing: 0.5rem;
+            }
         }
         .hide-scrollbar::-webkit-scrollbar {
             display: none;
@@ -18,7 +49,6 @@
             -ms-overflow-style: none;
             scrollbar-width: none;
         }
-        /* Optimize for mobile safe areas */
         .pb-safe {
             padding-bottom: env(safe-area-inset-bottom);
         }
@@ -34,7 +64,7 @@
 }
 </script>
 </head>
-<body class="bg-slate-50 text-slate-900">
+<body class="text-[#4A3728]">
     <div id="root"></div>
 </body>
 </html>

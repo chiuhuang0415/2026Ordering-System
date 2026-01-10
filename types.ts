@@ -1,15 +1,26 @@
 
-export type Category = '食材' | '包材' | '飲品' | '調味料' | '清潔用品';
+export type Category = '蔬菜' | '肉品、內臟' | '食材' | '包材' | '飲品' | '調味料' | '清潔用品';
+
+export interface User {
+  username: string;
+  password: string;
+  franchiseName: string;
+}
+
+export interface NewsItem {
+  title: string;
+  content: string;
+  date: string;
+}
 
 export interface Product {
   id: string;
   name: string;
   price: number;
   unit: string;
+  minUnit: number; // 最小出貨單位量
   category: Category;
   image: string;
-  stock: number;
-  minOrder: number;
 }
 
 export interface CartItem extends Product {
