@@ -18,7 +18,7 @@ export interface Product {
   name: string;
   price: number;
   unit: string;
-  minUnit: number; // 最小出貨單位量
+  minUnit: number;
   category: Category;
   image: string;
 }
@@ -40,8 +40,10 @@ export interface Order {
   date: string;
   total: number;
   items: CartItem[];
+  itemsSummary?: string; // 新增：用於顯示歷史記錄的摘要
   status: OrderStatus;
   deliveryDate: string;
+  franchiseName?: string; // 新增：顯示分店名稱
 }
 
 export type View = 'home' | 'catalog' | 'cart' | 'orders';

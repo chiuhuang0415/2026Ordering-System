@@ -1,11 +1,10 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, Product, CartItem, Order, OrderStatus, Category, User, NewsItem } from './types';
 import { DEFAULT_CATEGORIES } from './constants';
-import { fetchProductsFromSheet, fetchUsersFromSheet, submitOrderToSheet, fetchNewsFromSheet } from './services/sheetService';
+import { fetchProductsFromSheet, fetchUsersFromSheet, submitOrderToSheet, fetchNewsFromSheet, fetchOrderHistoryFromSheet } from './services/sheetService';
 import Navigation from './components/Navigation';
 
-// 安全地獲取 API URL
 const getApiUrl = () => {
   try {
     const envUrl = (import.meta as any).env?.VITE_GOOGLE_SHEET_API_URL;
@@ -29,12 +28,17 @@ const App: React.FC = () => {
   const [news, setNews] = useState<NewsItem[]>([]);
   const [dynamicCategories, setDynamicCategories] = useState<(Category | string)[]>(DEFAULT_CATEGORIES);
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingNews, setIsLoadingNews] = useState(false);
+  const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [orders, setOrders] = useState<Order[]>([]);
+  const [orders, setOrders] = useState<Order[]>([]); 
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  const [selectedMonth, setSelectedMonth] = useState<string>(() => {
+    const d = new Date();
+    return `${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}`;
+  });
 
   useEffect(() => {
     const savedUser = localStorage.getItem('franchise_user');
@@ -51,11 +55,10 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (!isAuthenticated) return;
-    const loadData = async () => {
+    if (!isAuthenticated || !currentUser) return;
+    const loadInitialData = async () => {
       try {
         setIsLoading(true);
-        setIsLoadingNews(true);
         const [productData, newsData] = await Promise.all([
           fetchProductsFromSheet(GOOGLE_SHEET_API_URL),
           fetchNewsFromSheet(GOOGLE_SHEET_API_URL)
@@ -66,17 +69,31 @@ const App: React.FC = () => {
           const cats = Array.from(new Set(productData.map(p => p.category))) as Category[];
           setDynamicCategories(cats);
         }
-
         if (newsData) setNews(newsData);
       } catch (err) {
         console.error("資料載入失敗");
       } finally {
         setIsLoading(false);
-        setIsLoadingNews(false);
       }
     };
-    loadData();
+    loadInitialData();
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser || currentView !== 'orders') return;
+    const loadHistory = async () => {
+      setIsLoadingOrders(true);
+      try {
+        const history = await fetchOrderHistoryFromSheet(GOOGLE_SHEET_API_URL, currentUser.franchiseName);
+        setOrders(history);
+      } catch (err) {
+        console.error("歷史紀錄載入失敗");
+      } finally {
+        setIsLoadingOrders(false);
+      }
+    };
+    loadHistory();
+  }, [isAuthenticated, currentView, currentUser]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -132,6 +149,28 @@ const App: React.FC = () => {
     }).filter(item => item.quantity > 0));
   };
 
+  // 新增：將目前顯示的品項全部設為最小單位
+  const handleSetAllToMin = () => {
+    if (filteredProducts.length === 0) return;
+    if (!window.confirm(`確定要將目前顯示的 ${filteredProducts.length} 個品項全部填入最小單位嗎？`)) return;
+
+    setCart(prev => {
+      const newCart = [...prev];
+      filteredProducts.forEach(p => {
+        const index = newCart.findIndex(item => item.id === p.id);
+        if (index > -1) {
+          // 如果已在購物車，重設為最小單位
+          newCart[index] = { ...newCart[index], quantity: p.minUnit };
+        } else {
+          // 如果不在購物車，新增進去
+          newCart.push({ ...p, quantity: p.minUnit });
+        }
+      });
+      return newCart;
+    });
+    alert('已為您自動填入最小單位！');
+  };
+
   const handleCheckout = async () => {
     if (cart.length === 0 || !currentUser) return;
     setIsSubmitting(true);
@@ -147,10 +186,11 @@ const App: React.FC = () => {
     try {
       const success = await submitOrderToSheet(GOOGLE_SHEET_API_URL, newOrder, currentUser.franchiseName);
       if (success) {
-        setOrders([newOrder, ...orders]);
         setCart([]);
         setCurrentView('orders');
         alert('訂單已成功送出！');
+        const history = await fetchOrderHistoryFromSheet(GOOGLE_SHEET_API_URL, currentUser.franchiseName);
+        setOrders(history);
       } else {
         alert('訂單同步失敗');
       }
@@ -161,42 +201,38 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRepeatLastOrder = () => {
-    if (orders.length === 0) {
-      alert('目前尚無歷史訂單記錄。');
-      return;
-    }
-    const lastOrder = orders[0];
-    const newItems: CartItem[] = [];
-    lastOrder.items.forEach(oldItem => {
-      const currentProduct = products.find(p => p.id === oldItem.id);
-      if (currentProduct) {
-        newItems.push({ ...currentProduct, quantity: oldItem.quantity });
-      }
-    });
-
-    if (newItems.length > 0) {
-      setCart(newItems);
-      alert('已自動填入上一筆訂單品項！');
-      setCurrentView('cart');
-    } else {
-      alert('上一筆訂單的商品已下架。');
-    }
-  };
-
   const filteredProducts = products.filter(p => {
     const matchCategory = selectedCategory === '全部' || p.category === selectedCategory;
     const matchSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase());
     return matchCategory && matchSearch;
   });
 
+  const filteredOrders = useMemo(() => {
+    return orders.filter(order => {
+      if (!order.date) return false;
+      return order.date.includes(selectedMonth);
+    });
+  }, [orders, selectedMonth]);
+
+  const monthlyTotal = useMemo(() => {
+    return filteredOrders.reduce((sum, order) => sum + order.total, 0);
+  }, [filteredOrders]);
+
+  const months = useMemo(() => {
+    const result = [];
+    for (let i = 0; i < 6; i++) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - i);
+      result.push(`${d.getFullYear()}/${(d.getMonth() + 1).toString().padStart(2, '0')}`);
+    }
+    return result;
+  }, []);
+
   const cartTotal = cart.reduce((acc, i) => acc + i.price * i.quantity, 0);
   const cartItemCount = cart.reduce((acc, i) => acc + i.quantity, 0);
 
-  // 輔助函式：僅保留年月日
   const formatDate = (dateStr: string) => {
     if (!dateStr) return "";
-    // 處理 GAS 傳回的日期字串，分割掉時間部分
     return dateStr.split('T')[0].split(' ')[0];
   };
 
@@ -263,11 +299,7 @@ const App: React.FC = () => {
                 </h3>
               </div>
               <div className="space-y-3">
-                {isLoadingNews ? (
-                  <div className="bg-white p-6 rounded-3xl border border-[#E5D3BC] flex items-center justify-center">
-                    <div className="w-4 h-4 border-2 border-[#8B7355] border-t-transparent rounded-full animate-spin"></div>
-                  </div>
-                ) : news.length === 0 ? (
+                {news.length === 0 ? (
                   <div className="bg-white p-6 rounded-3xl border border-[#E5D3BC] text-center">
                     <p className="text-[11px] text-[#D2B48C] font-bold uppercase tracking-widest">目前暫無重要公告</p>
                   </div>
@@ -281,7 +313,6 @@ const App: React.FC = () => {
                         </div>
                         <p className="text-[13px] font-medium text-stone-100/90 leading-relaxed">{item.content}</p>
                       </div>
-                      <div className="absolute -right-4 -bottom-4 opacity-10 pointer-events-none text-4xl">🐔</div>
                     </div>
                   ))
                 )}
@@ -294,9 +325,6 @@ const App: React.FC = () => {
             </div>
 
             <section className="bg-[#F5E6D3]/40 rounded-[2.5rem] shadow-sm overflow-hidden border border-[#E5D3BC]/60 backdrop-blur-sm">
-              <div className="flex items-center justify-between p-4 px-6 border-b border-[#E5D3BC]/40">
-                <h2 className="text-[10px] font-black text-[#8B7355] flex items-center gap-2 uppercase tracking-[0.2em]">🌤️ 當地氣候概況</h2>
-              </div>
               <div className="relative h-[250px] w-full bg-white/30">
                 <iframe src="https://indify.co/widgets/live/weather/znO94wvhhwqSGXWUXkE8" frameBorder="0" scrolling="no" className="w-full h-full mix-blend-multiply" title="Weather" />
               </div>
@@ -319,18 +347,6 @@ const App: React.FC = () => {
 
         {currentView === 'catalog' && (
           <div className="space-y-4">
-            {orders.length > 0 && (
-              <button onClick={handleRepeatLastOrder} className="w-full bg-[#F5E6D3] border border-[#E5D3BC] py-4 rounded-2xl flex items-center justify-center gap-3 active:scale-95 transition-all group">
-                <div className="w-8 h-8 bg-[#8B7355] rounded-lg flex items-center justify-center text-white shadow-md">
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                </div>
-                <div className="text-left">
-                  <p className="text-[13px] font-black text-[#8B7355] leading-none">一鍵帶入上次叫貨</p>
-                  <p className="text-[10px] text-[#A68966] font-bold mt-1 uppercase tracking-tighter">Repeat your previous order</p>
-                </div>
-              </button>
-            )}
-
             <div className="relative sticky top-0 z-30 pt-1 bg-[#FDFBF7]/90 backdrop-blur-sm">
               <input type="text" placeholder="搜尋食材..." className="w-full pl-11 pr-4 py-4 bg-white border border-[#E5D3BC] rounded-2xl text-sm font-bold shadow-sm focus:ring-4 focus:ring-[#8B7355]/10 focus:border-[#8B7355] transition-all outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
               <svg className="absolute left-4 top-[1.3rem] w-5 h-5 text-stone-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
@@ -343,47 +359,48 @@ const App: React.FC = () => {
               ))}
             </div>
 
-            {isLoading ? (
-               <div className="py-24 text-center">
-                  <div className="inline-block w-10 h-10 border-[4px] border-[#8B7355] border-t-transparent rounded-full animate-spin mb-4"></div>
-                  <p className="text-stone-400 text-xs font-black uppercase tracking-widest">同步資料庫中...</p>
-               </div>
-            ) : (
-              <div className="flex flex-col gap-3 pb-8">
-                {filteredProducts.map(product => {
-                  const inCart = cart.find(item => item.id === product.id);
-                  return (
-                    <div key={product.id} className="bg-white rounded-2xl border border-[#E5D3BC] shadow-sm flex items-center p-4 gap-4 active:bg-stone-50 transition-colors">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="text-[9px] font-bold text-[#8B7355] bg-[#F5E6D3] px-1.5 py-0.5 rounded leading-none shrink-0 uppercase tracking-tighter">
-                            {product.category}
-                          </span>
-                          <h4 className="text-[15px] font-black text-[#4A3728] truncate leading-tight">
-                            {product.name}
-                          </h4>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right whitespace-nowrap flex items-baseline gap-1">
-                          <span className="text-[#8B7355] font-black text-lg">${product.price}</span>
-                          <span className="text-[11px] text-stone-400 font-bold uppercase">{product.unit}</span>
-                        </div>
-                        {inCart ? (
-                          <div className="flex items-center gap-2 bg-[#F5E6D3] rounded-xl p-1 border border-[#E5D3BC]">
-                            <button onClick={() => updateQuantity(product.id, -product.minUnit)} className="w-8 h-8 flex items-center justify-center text-[#8B7355] text-lg font-black">-</button>
-                            <span className="text-[13px] font-black min-w-[24px] text-center text-[#4A3728]">{inCart.quantity}</span>
-                            <button onClick={() => updateQuantity(product.id, product.minUnit)} className="w-8 h-8 flex items-center justify-center text-[#8B7355] text-lg font-black">+</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => addToCart(product)} className="bg-[#8B7355] text-white w-14 h-10 rounded-xl text-xs font-black shadow-lg shadow-[#8B7355]/10 active:bg-[#6D5A42] active:scale-95 transition-all">選購</button>
-                        )}
+            {/* 新增：全部填寫最小單位按鈕 */}
+            <button 
+              onClick={handleSetAllToMin} 
+              className="w-full bg-[#F5E6D3] border-2 border-[#E5D3BC] py-3.5 rounded-2xl flex items-center justify-center gap-2 active:scale-95 transition-all group"
+            >
+              <span className="text-xl">📋</span>
+              <div className="text-left">
+                <p className="text-[13px] font-black text-[#8B7355] leading-none">全品項自動填寫 (最小單位)</p>
+                <p className="text-[9px] text-[#A68966] font-bold mt-1 uppercase tracking-tighter">Auto-fill all visible items with min unit</p>
+              </div>
+            </button>
+
+            <div className="flex flex-col gap-3 pb-8">
+              {filteredProducts.map(product => {
+                const inCart = cart.find(item => item.id === product.id);
+                return (
+                  <div key={product.id} className="bg-white rounded-2xl border border-[#E5D3BC] shadow-sm flex items-center p-4 gap-4 active:bg-stone-50 transition-colors">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[9px] font-bold text-[#8B7355] bg-[#F5E6D3] px-1.5 py-0.5 rounded leading-none shrink-0 uppercase tracking-tighter">{product.category}</span>
+                        <h4 className="text-[15px] font-black text-[#4A3728] truncate leading-tight">{product.name}</h4>
                       </div>
                     </div>
-                  );
-                })}
-              </div>
-            )}
+                    <div className="flex items-center gap-4">
+                      <div className="text-right whitespace-nowrap flex items-baseline gap-1">
+                        <span className="text-[#8B7355] font-black text-lg">${product.price}</span>
+                        <span className="text-[11px] text-stone-400 font-bold uppercase">{product.unit}</span>
+                      </div>
+                      {inCart ? (
+                        <div className="flex items-center gap-2 bg-[#F5E6D3] rounded-xl p-1 border border-[#E5D3BC]">
+                          <button onClick={() => updateQuantity(product.id, -product.minUnit)} className="w-8 h-8 flex items-center justify-center text-[#8B7355] text-lg font-black">-</button>
+                          <span className="text-[13px] font-black min-w-[24px] text-center text-[#4A3728]">{inCart.quantity}</span>
+                          <button onClick={() => updateQuantity(product.id, product.minUnit)} className="w-8 h-8 flex items-center justify-center text-[#8B7355] text-lg font-black">+</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => addToCart(product)} className="bg-[#8B7355] text-white w-14 h-10 rounded-xl text-xs font-black shadow-lg shadow-[#8B7355]/10 active:bg-[#6D5A42] active:scale-95 transition-all">選購</button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
 
@@ -394,7 +411,6 @@ const App: React.FC = () => {
                 <div className="bg-white rounded-[2.5rem] p-16 text-center border-2 border-dashed border-[#E5D3BC] mt-4">
                    <p className="text-5xl mb-6">🛒</p>
                    <p className="text-sm font-black text-stone-400 uppercase tracking-widest">購物車還是空的</p>
-                   <button onClick={() => setCurrentView('catalog')} className="mt-6 text-[#8B7355] font-black text-xs underline underline-offset-4 decoration-2">立即選購食材</button>
                 </div>
              ) : (
                 <div className="space-y-6">
@@ -430,35 +446,71 @@ const App: React.FC = () => {
 
         {currentView === 'orders' && (
            <div className="space-y-6">
-              <div className="px-1 flex justify-between items-end">
-                <div>
-                  <h2 className="text-2xl font-black text-[#4A3728] tracking-tight">訂單記錄</h2>
-                  <p className="text-[10px] text-[#A68966] font-bold uppercase tracking-widest mt-1">Transaction History</p>
-                </div>
-                <button onClick={() => window.location.reload()} className="text-[#8B7355] font-black text-[10px] flex items-center gap-1 transition-transform active:scale-95">🔄 刷新</button>
+              <div className="px-1 space-y-2">
+                <h2 className="text-2xl font-black text-[#4A3728] tracking-tight">對帳記錄 (Shipped)</h2>
+                <p className="text-[10px] text-[#A68966] font-bold uppercase tracking-widest">Official Transaction History</p>
               </div>
-              {orders.length === 0 ? (
-                <div className="py-32 text-center">
-                  <p className="text-6xl mb-6">📜</p>
-                  <p className="text-stone-300 text-sm font-black uppercase tracking-[0.2em]">目前沒有記錄</p>
+
+              <div className="flex overflow-x-auto gap-2 hide-scrollbar py-2">
+                {months.map(m => (
+                  <button 
+                    key={m} 
+                    onClick={() => setSelectedMonth(m)} 
+                    className={`px-6 py-2.5 rounded-full text-xs font-black whitespace-nowrap transition-all ${selectedMonth === m ? 'bg-[#8B7355] text-white shadow-lg' : 'bg-white border border-[#E5D3BC] text-stone-500'}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+
+              <div className="bg-[#8B7355] rounded-[2rem] p-6 shadow-xl shadow-[#8B7355]/20 text-white relative overflow-hidden">
+                <div className="relative z-10 flex justify-between items-center">
+                  <div>
+                    <p className="text-[10px] font-black text-stone-200 uppercase tracking-[0.2em] mb-1">{selectedMonth} 訂購總額</p>
+                    <p className="text-3xl font-black">${Math.round(monthlyTotal * 100) / 100}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-stone-200 uppercase tracking-widest mb-1">共計</p>
+                    <p className="text-xl font-black">{filteredOrders.length} 筆</p>
+                  </div>
+                </div>
+                <div className="absolute -right-4 -bottom-6 text-7xl opacity-10 font-black italic">CHICKEN</div>
+              </div>
+
+              {isLoadingOrders ? (
+                <div className="py-24 text-center">
+                  <div className="inline-block w-10 h-10 border-[4px] border-[#8B7355] border-t-transparent rounded-full animate-spin mb-4"></div>
+                  <p className="text-stone-400 text-xs font-black uppercase tracking-widest">從雲端對帳資料庫讀取中...</p>
+                </div>
+              ) : filteredOrders.length === 0 ? (
+                <div className="py-24 text-center bg-white rounded-[2rem] border border-[#E5D3BC] border-dashed">
+                  <p className="text-4xl mb-4">📭</p>
+                  <p className="text-stone-400 text-sm font-black uppercase tracking-widest">此月份尚無對帳紀錄</p>
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {orders.map(order => (
-                    <div key={order.id} className="bg-white p-5 rounded-[2rem] border border-[#E5D3BC] shadow-sm space-y-4 relative overflow-hidden active:bg-stone-50 transition-colors">
-                       <div className="flex justify-between items-center relative z-10">
-                          <span className="text-[10px] font-black text-stone-300 tracking-wider">#{order.id.split('-')[1]}</span>
-                          <span className={`text-[9px] font-black px-3 py-1.5 rounded-full uppercase tracking-widest ${order.status === OrderStatus.PENDING ? 'bg-[#F5E6D3] text-[#8B7355]' : 'bg-[#E5D3BC] text-[#6D5A42]'}`}>{order.status}</span>
-                       </div>
-                       <div className="flex justify-between items-end relative z-10">
+                  {filteredOrders.map(order => (
+                    <div key={order.id} className="bg-white p-5 rounded-[2rem] border border-[#E5D3BC] shadow-sm space-y-3 active:bg-stone-50 transition-all border-l-[6px] border-l-[#8B7355]">
+                       <div className="flex justify-between items-start">
                           <div>
-                             <p className="text-[13px] font-black text-[#4A3728]">{order.date}</p>
-                             <p className="text-[10px] text-stone-400 font-bold mt-1">預計配送: {order.deliveryDate}</p>
+                            <p className="text-[10px] font-black text-[#A68966] uppercase tracking-widest">{formatDate(order.date)}</p>
+                            <h4 className="text-sm font-black text-[#4A3728] mt-1">單號: #{order.id}</h4>
                           </div>
+                          <span className="bg-[#F5E6D3] text-[#8B7355] text-[9px] font-black px-3 py-1 rounded-full uppercase tracking-widest">{order.status}</span>
+                       </div>
+                       
+                       <div className="py-2 px-3 bg-stone-50 rounded-xl border border-stone-100">
+                         <p className="text-[10px] font-bold text-stone-400 uppercase tracking-tighter mb-1">品項摘要:</p>
+                         <p className="text-xs font-medium text-[#4A3728] leading-relaxed line-clamp-2">{order.itemsSummary || "無品項詳情"}</p>
+                       </div>
+
+                       <div className="flex justify-between items-center pt-2">
+                          <span className="text-[11px] font-black text-[#8B7355] flex items-center gap-1">📍 {order.franchiseName}</span>
                           <p className="text-xl font-black text-[#8B7355] tracking-tight">${Math.round(order.total * 100) / 100}</p>
                        </div>
                     </div>
                   ))}
+                  <div className="h-20"></div>
                 </div>
               )}
            </div>
