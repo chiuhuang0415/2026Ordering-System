@@ -40,10 +40,20 @@ export interface Order {
   date: string;
   total: number;
   items: CartItem[];
-  itemsSummary?: string; // 新增：用於顯示歷史記錄的摘要
+  itemsSummary?: string;
   status: OrderStatus;
   deliveryDate: string;
-  franchiseName?: string; // 新增：顯示分店名稱
+  franchiseName?: string;
 }
 
-export type View = 'home' | 'catalog' | 'cart' | 'orders';
+export interface LedgerEntry {
+  id: string;
+  date: string;
+  franchiseName: string;
+  type: '收入' | '支出';
+  category: string;
+  amount: number;
+  note: string;
+}
+
+export type View = 'home' | 'catalog' | 'cart' | 'orders' | 'ledger';
