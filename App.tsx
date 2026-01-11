@@ -340,7 +340,7 @@ const App: React.FC = () => {
                <h2 className="text-2xl font-black text-[#4A3728] tracking-tight">你好，{currentUser?.franchiseName} 👋</h2>
                <p className="text-[11px] text-[#A68966] font-bold mt-1 uppercase tracking-widest">今日也要元氣滿滿的出攤喔！</p>
             </div>
-            {/* 天氣 Widget - 優化定位與縮放邏輯，確保不留黑邊 */}
+            {/* 天氣 Widget */}
             <section className="bg-[#1A1A1A] rounded-[2.5rem] shadow-xl overflow-hidden border border-black/20">
               <div className="relative h-[220px] w-full flex items-center justify-center overflow-hidden">
                 <iframe 
@@ -456,6 +456,7 @@ const App: React.FC = () => {
 
               {orderSubView === 'ledger' ? (
                 <div className="space-y-6 relative">
+                  {/* 盈餘看板 - 簡化資訊 */}
                   <div className={`p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden transition-colors ${monthlyProfit >= 0 ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-rose-500 shadow-rose-500/20'}`}>
                     <div className="relative z-10 flex justify-between items-center">
                       <div>
@@ -464,7 +465,7 @@ const App: React.FC = () => {
                       </div>
                       <div className="text-right">
                         <p className="text-[10px] font-black uppercase opacity-80">本月狀態</p>
-                        <p className="text-lg font-black">{monthlyProfit >= 0 ? '👍 盈利' : '👎 赤字'}</p>
+                        <p className="text-lg font-black">{monthlyProfit >= 0 ? '盈利' : '赤字'}</p>
                       </div>
                     </div>
                   </div>
@@ -564,38 +565,63 @@ const App: React.FC = () => {
                     </div>
                   )}
 
-                  <div className="space-y-4">
-                    <h5 className="text-[11px] font-black text-[#8B7355] uppercase tracking-widest px-1">本月財務明細</h5>
-                    
-                    {monthlyOrderTotal > 0 && (
-                      <div className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm flex justify-between items-center border-l-[10px] border-l-[#C53030]">
-                         <div>
-                            <p className="text-[9px] font-black text-stone-300 uppercase tracking-tighter">自動匯入 (叫貨紀錄)</p>
-                            <h6 className="text-base font-black text-[#4A3728] mt-0.5">食材進貨支出</h6>
-                            <p className="text-[10px] text-stone-400 font-bold">{filteredOrders.length} 筆訂單彙整</p>
-                         </div>
-                         <span className="text-xl font-black text-[#C53030]">-${monthlyOrderTotal}</span>
+                  <div className="space-y-8">
+                    {/* 收入清單區塊 - 標題旁顯示累計 */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center px-1">
+                        <h5 className="text-[12px] font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-widest border border-emerald-100">本月收入清單</h5>
+                        <span className="text-[12px] font-black text-emerald-600">累計: ${Math.round(monthlyIncome * 100) / 100}</span>
                       </div>
-                    )}
+                      {filteredLedger.filter(l => l.type === '收入').map(l => (
+                        <div key={l.id} className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm flex justify-between items-center border-l-[10px] border-l-emerald-500">
+                           <div>
+                              <p className="text-[9px] font-black text-stone-300">{l.date}</p>
+                              <h6 className="text-base font-black text-[#4A3728] mt-0.5">{l.category}</h6>
+                              {l.note && <p className="text-[10px] text-stone-400 font-bold">{l.note}</p>}
+                           </div>
+                           <span className="text-xl font-black text-emerald-600">+${l.amount}</span>
+                        </div>
+                      ))}
+                      {filteredLedger.filter(l => l.type === '收入').length === 0 && (
+                        <div className="py-8 text-center text-stone-300 text-[10px] font-bold bg-white rounded-3xl border-2 border-dashed border-[#E5D3BC] uppercase tracking-widest">目前無收入紀錄</div>
+                      )}
+                    </div>
 
-                    {filteredLedger.map(l => (
-                      <div key={l.id} className={`bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm flex justify-between items-center border-l-[10px] ${l.type === '收入' ? 'border-l-[#2C7A7B]' : 'border-l-[#C53030]'}`}>
-                         <div>
-                            <p className="text-[9px] font-black text-stone-300">{l.date}</p>
-                            <h6 className="text-base font-black text-[#4A3728] mt-0.5">{l.category}</h6>
-                            {l.note && <p className="text-[10px] text-stone-400 font-bold">{l.note}</p>}
-                         </div>
-                         <span className={`text-xl font-black ${l.type === '收入' ? 'text-[#2C7A7B]' : 'text-[#C53030]'}`}>
-                           {l.type === '收入' ? '+' : '-'}${l.amount}
-                         </span>
+                    {/* 支出清單區塊 - 標題旁顯示累計 */}
+                    <div className="space-y-3">
+                      <div className="flex justify-between items-center px-1">
+                        <h5 className="text-[12px] font-black text-rose-600 bg-rose-50 px-3 py-1 rounded-full uppercase tracking-widest border border-rose-100">本月支出清單</h5>
+                        <span className="text-[12px] font-black text-rose-600">累計: ${Math.round(monthlyTotalExpense * 100) / 100}</span>
                       </div>
-                    ))}
-                    
-                    {filteredLedger.length === 0 && monthlyOrderTotal === 0 && (
-                      <div className="py-20 text-center text-stone-300 text-xs font-bold bg-white rounded-[2.5rem] border-2 border-dashed border-[#E5D3BC] uppercase tracking-widest">
-                        尚未有收支紀錄
-                      </div>
-                    )}
+                      
+                      {/* 自動匯入項目：叫貨支出 */}
+                      {monthlyOrderTotal > 0 && (
+                        <div className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm flex justify-between items-center border-l-[10px] border-l-rose-500">
+                           <div>
+                              <p className="text-[9px] font-black text-stone-300 uppercase tracking-tighter">自動匯入 (叫貨總和)</p>
+                              <h6 className="text-base font-black text-[#4A3728] mt-0.5">食材進貨支出</h6>
+                              <p className="text-[10px] text-stone-400 font-bold">{filteredOrders.length} 筆訂單總計</p>
+                           </div>
+                           <span className="text-xl font-black text-rose-600">-${monthlyOrderTotal}</span>
+                        </div>
+                      )}
+
+                      {/* 手動輸入項目 */}
+                      {filteredLedger.filter(l => l.type === '支出').map(l => (
+                        <div key={l.id} className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm flex justify-between items-center border-l-[10px] border-l-rose-500">
+                           <div>
+                              <p className="text-[9px] font-black text-stone-300">{l.date}</p>
+                              <h6 className="text-base font-black text-[#4A3728] mt-0.5">{l.category}</h6>
+                              {l.note && <p className="text-[10px] text-stone-400 font-bold">{l.note}</p>}
+                           </div>
+                           <span className="text-xl font-black text-rose-600">-${l.amount}</span>
+                        </div>
+                      ))}
+
+                      {filteredLedger.filter(l => l.type === '支出').length === 0 && monthlyOrderTotal === 0 && (
+                        <div className="py-8 text-center text-stone-300 text-[10px] font-bold bg-white rounded-3xl border-2 border-dashed border-[#E5D3BC] uppercase tracking-widest">目前無支出紀錄</div>
+                      )}
+                    </div>
                   </div>
                 </div>
               ) : orderSubView === 'list' ? (
