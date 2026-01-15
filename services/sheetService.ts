@@ -1,8 +1,8 @@
 import { Product, Category, User, Order, NewsItem, OrderStatus, LedgerEntry } from "../types";
 
-/**
- * 欄位值抓取工具：不論大小寫、前後空白或中英標題都能抓到
- */
+// ----------------------------------------------------
+// 高強度工具函式
+// ----------------------------------------------------
 const getValueByKeys = (obj: any, keys: string[]) => {
   if (!obj) return undefined;
   const objKeys = Object.keys(obj);
@@ -15,9 +15,6 @@ const getValueByKeys = (obj: any, keys: string[]) => {
   return undefined;
 };
 
-/**
- * 強健的數字轉換：移除 $、, 等非數字符號
- */
 const parseRobustNumber = (val: any): number => {
   if (val === undefined || val === null || val === "") return 0;
   if (typeof val === 'number') return val;
@@ -30,7 +27,7 @@ const safeJsonParse = (text: string) => {
   try {
     if (!text || text.trim() === "") return null;
     const trimmed = text.trim();
-    if (trimmed.startsWith('<')) return null; // 避免抓到 HTML 錯誤頁面
+    if (trimmed.startsWith('<')) return null;
     return JSON.parse(trimmed);
   } catch (e) {
     return null;
@@ -38,8 +35,46 @@ const safeJsonParse = (text: string) => {
 };
 
 /**
- * 登入驗證：對應 GAS 的 action: login
+ * 強健日期解析：支援各種格式並回傳 Timestamp
  */
+const getTimestamp = (dateStr: any): number => {
+  if (!dateStr) return 0;
+  const normalized = dateStr.toString().replace(/-/g, '/');
+  const date = new Date(normalized);
+  return isNaN(date.getTime()) ? 0 : date.getTime();
+};
+
+const sortByDateDesc = (a: any, b: any) => getTimestamp(b.date) - getTimestamp(a.date);
+
+// ----------------------------------------------------
+// 嚴格判定邏輯 (解決資料混雜的核心)
+// ----------------------------------------------------
+
+/**
+ * 判定是否為「純訂單」資料
+ */
+const isStrictOrder = (item: any): boolean => {
+  const hasOrderIndicator = !!(getValueByKeys(item, ['orderNumber', '訂單編號', 'id', 'order']));
+  const hasItems = !!(getValueByKeys(item, ['summary', '品項摘要', 'items', 'content']));
+  const hasLedgerType = !!(getValueByKeys(item, ['類型', 'type']));
+  // 訂單必須有編號或內容，且絕對不能有「收支類型」標籤
+  return (hasOrderIndicator || hasItems) && !hasLedgerType;
+};
+
+/**
+ * 判定是否為「純收支紀錄」資料
+ */
+const isStrictLedger = (item: any): boolean => {
+  const type = (getValueByKeys(item, ['類型', 'type']) || "").toString().trim();
+  const hasItems = !!(getValueByKeys(item, ['summary', '品項摘要', 'items']));
+  // 收支必須明確標記為 收入/支出，且不能有訂單的「品項摘要」
+  return (type === '收入' || type === '支出') && !hasItems;
+};
+
+// ----------------------------------------------------
+// API 函式區
+// ----------------------------------------------------
+
 export const loginToSheet = async (apiUrl: string, id: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
   try {
     const response = await fetch(apiUrl, {
@@ -76,7 +111,7 @@ export const fetchNewsFromSheet = async (apiUrl: string): Promise<NewsItem[]> =>
       title: getValueByKeys(item, ['title', '標題']) || "公告",
       content: getValueByKeys(item, ['content', '內容']) || "",
       date: getValueByKeys(item, ['date', '日期']) || ""
-    }));
+    })).sort(sortByDateDesc);
   } catch (error) {
     return [];
   }
@@ -104,7 +139,7 @@ export const fetchProductsFromSheet = async (apiUrl: string): Promise<Product[]>
 };
 
 /**
- * 讀取歷史：呼叫 action=getHistory (Shipped_History 表)
+ * 讀取歷史訂單 (Shipped_History)
  */
 export const fetchOrderHistoryFromSheet = async (apiUrl: string, franchiseName: string): Promise<Order[]> => {
   if (!apiUrl) return [];
@@ -117,25 +152,26 @@ export const fetchOrderHistoryFromSheet = async (apiUrl: string, franchiseName: 
     return result
       .filter((item: any) => {
         const name = getValueByKeys(item, ['franchiseName', '分店名稱', '店名']);
-        return name && name.toString().trim() === franchiseName.trim();
+        return isStrictOrder(item) && name && name.toString().trim() === franchiseName.trim();
       })
       .map((item: any) => ({
-        id: (getValueByKeys(item, ['order', '訂單編號', 'id']) || "").toString(),
+        id: (getValueByKeys(item, ['orderNumber', '訂單編號', 'id', 'order']) || "").toString(),
         date: (getValueByKeys(item, ['date', '日期']) || "").toString(),
         total: parseRobustNumber(getValueByKeys(item, ['金額', 'amount', 'total'])),
-        itemsSummary: getValueByKeys(item, ['items', '品項摘要', 'summary']) || "",
+        itemsSummary: getValueByKeys(item, ['summary', '品項摘要', 'items']) || "",
         franchiseName: franchiseName,
         status: (getValueByKeys(item, ['status', '狀態']) as OrderStatus) || OrderStatus.COMPLETED,
         items: [], 
         deliveryDate: ""
-      })).reverse();
+      }))
+      .sort(sortByDateDesc);
   } catch (error) {
     return [];
   }
 };
 
 /**
- * 讀取待處理訂單：呼叫 action=getOrders (Orders 表)
+ * 讀取待處理訂單 (Orders)
  */
 export const fetchActiveOrdersFromSheet = async (apiUrl: string, franchiseName: string): Promise<Order[]> => {
   if (!apiUrl) return [];
@@ -148,7 +184,7 @@ export const fetchActiveOrdersFromSheet = async (apiUrl: string, franchiseName: 
     return result
       .filter((item: any) => {
         const name = getValueByKeys(item, ['franchiseName', '分店名稱', '店名']);
-        return name && name.toString().trim() === franchiseName.trim();
+        return isStrictOrder(item) && name && name.toString().trim() === franchiseName.trim();
       })
       .map((item: any) => ({
         id: (getValueByKeys(item, ['order', '訂單編號', 'id']) || "").toString(),
@@ -161,12 +197,15 @@ export const fetchActiveOrdersFromSheet = async (apiUrl: string, franchiseName: 
         deliveryDate: ""
       }))
       .filter((order: Order) => order.status === OrderStatus.PENDING)
-      .reverse();
+      .sort(sortByDateDesc);
   } catch (error) {
     return [];
   }
 };
 
+/**
+ * 讀取收支紀錄 (Ledger)
+ */
 export const fetchLedgerFromSheet = async (apiUrl: string, franchiseName: string): Promise<LedgerEntry[]> => {
   if (!apiUrl) return [];
   try {
@@ -174,38 +213,39 @@ export const fetchLedgerFromSheet = async (apiUrl: string, franchiseName: string
     const text = await response.text();
     const result = safeJsonParse(text);
     if (!result || !Array.isArray(result)) return [];
+    
     return result
       .filter((item: any) => {
         const name = getValueByKeys(item, ['分店名稱', '店名', 'franchiseName']);
-        return name && name.toString().trim() === franchiseName.trim();
+        return isStrictLedger(item) && name && name.toString().trim() === franchiseName.trim();
       })
       .map((item: any) => ({
-        id: (getValueByKeys(item, ['id', '編號']) || "").toString(),
+        id: (getValueByKeys(item, ['id', '編號', 'sn']) || `L-${Math.random().toString(36).substr(2, 9)}`).toString(),
         date: (getValueByKeys(item, ['日期', 'date']) || "").toString(),
         franchiseName: franchiseName,
-        type: getValueByKeys(item, ['類型', 'type']) || '支出',
-        category: getValueByKeys(item, ['項目', 'category']) || "",
+        type: getValueByKeys(item, ['類型', 'type']).toString().trim() as '收入' | '支出',
+        category: getValueByKeys(item, ['項目', 'category']) || "其他",
         amount: parseRobustNumber(getValueByKeys(item, ['金額', 'amount'])),
         note: getValueByKeys(item, ['備註', 'note']) || ""
-      }));
+      }))
+      .filter(entry => entry.amount > 0)
+      .sort(sortByDateDesc);
   } catch (error) {
     return [];
   }
 };
 
-/**
- * 提交叫貨單
- */
 export const submitOrderToSheet = async (apiUrl: string, order: Order, franchiseName: string): Promise<boolean> => {
   if (!apiUrl) return false;
   try {
-    const payload = {
+    const payload: any = {
       action: 'submitOrder',
       id: order.id,
       date: new Date().toLocaleString('zh-TW', { hour12: true }),
       franchiseName: franchiseName,
       items: order.items.map(i => `${i.id}*${i.quantity}`).join(', '),
-      status: order.status
+      status: order.status,
+      total: order.total || ""
     };
     
     const res = await fetch(apiUrl, {
@@ -214,7 +254,6 @@ export const submitOrderToSheet = async (apiUrl: string, order: Order, franchise
       body: JSON.stringify(payload),
       redirect: 'follow'
     });
-    
     const text = await res.text();
     const result = safeJsonParse(text);
     return result?.status === "Success";

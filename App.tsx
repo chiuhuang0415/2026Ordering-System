@@ -22,8 +22,11 @@ const App: React.FC = () => {
   const [isLoadingOrders, setIsLoadingOrders] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [cart, setCart] = useState<CartItem[]>([]);
+  
+  // 分開管理歷史訂單與待處理訂單
   const [orders, setOrders] = useState<Order[]>([]); 
   const [pendingOrders, setPendingOrders] = useState<Order[]>([]);
+
   const [ledgerEntries, setLedgerEntries] = useState<LedgerEntry[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('全部');
   const [searchQuery, setSearchQuery] = useState('');
@@ -83,7 +86,7 @@ const App: React.FC = () => {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!isAuthenticated || !currentUser || (currentView !== 'orders' && currentView !== 'cart')) return;
+    if (!isAuthenticated || !currentUser) return;
     
     const loadFinancialData = async () => {
       setIsLoadingOrders(true);
@@ -102,12 +105,15 @@ const App: React.FC = () => {
           setPendingOrders(active);
         }
       } catch (err) {
-        console.error("資料載入失敗");
+        console.error("訂單資料載入失敗");
       } finally {
         setIsLoadingOrders(false);
       }
     };
-    loadFinancialData();
+
+    if (currentView === 'orders' || currentView === 'cart') {
+      loadFinancialData();
+    }
   }, [isAuthenticated, currentView, currentUser]);
 
   const handleLogin = async (e: React.FormEvent) => {
@@ -179,7 +185,6 @@ const App: React.FC = () => {
       if (success) {
         setCart([]);
         alert('叫貨單已送出！');
-        // 送出後重新整理購物車頁面的待處理紀錄
         const active = await fetchActiveOrdersFromSheet(GOOGLE_SHEET_API_URL, currentUser.franchiseName);
         setPendingOrders(active);
       } else {
@@ -208,7 +213,7 @@ const App: React.FC = () => {
     try {
       const success = await submitLedgerToSheet(GOOGLE_SHEET_API_URL, newEntry);
       if (success) {
-        setLedgerEntries(prev => [newEntry, ...prev]);
+        setLedgerEntries(prev => [newEntry, ...prev].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
         setIsShowingLedgerForm(false);
         setLedgerForm({ ...ledgerForm, amount: '', note: '', category: '' });
         alert('紀錄已儲存！');
@@ -231,6 +236,7 @@ const App: React.FC = () => {
       if (!order.date) return false;
       const dateStr = order.date.toString().replace(/-/g, '/');
       const [y, m] = selectedMonth.split('/');
+      // 同時支持 2024/05 與 2024/5 匹配
       return dateStr.includes(`${y}/${m}`) || dateStr.includes(`${y}/${parseInt(m)}`);
     });
   }, [orders, selectedMonth]);
@@ -262,8 +268,9 @@ const App: React.FC = () => {
   const monthlyOrderTotal = useMemo(() => filteredOrders.reduce((sum, order) => sum + order.total, 0), [filteredOrders]);
   const monthlyIncome = useMemo(() => filteredLedger.filter(l => l.type === '收入').reduce((sum, l) => sum + l.amount, 0), [filteredLedger]);
   const monthlyExpenseManual = useMemo(() => filteredLedger.filter(l => l.type === '支出').reduce((sum, l) => sum + l.amount, 0), [filteredLedger]);
-  const monthlyTotalExpense = monthlyOrderTotal + monthlyExpenseManual;
-  const monthlyProfit = monthlyIncome - monthlyTotalExpense;
+  
+  // 總利潤 = 收入 - (手動記錄支出 + 叫貨支出)
+  const monthlyProfit = monthlyIncome - (monthlyExpenseManual + monthlyOrderTotal);
 
   const months = useMemo(() => {
     const res = [];
@@ -331,7 +338,7 @@ const App: React.FC = () => {
 
       <main className="flex-1 overflow-y-auto px-4 py-4 pb-32">
         {currentView === 'home' && (
-          <div className="space-y-6">
+          <div className="space-y-6 animate-in fade-in duration-500">
             <div className="px-1 pt-4">
                <h2 className="text-2xl font-black text-[#4A3728]">你好，{currentUser?.franchiseName} 👋</h2>
                <p className="text-[11px] text-[#A68966] font-bold mt-1 uppercase tracking-widest">今日也要元氣滿滿的出攤喔！</p>
@@ -362,7 +369,7 @@ const App: React.FC = () => {
         )}
 
         {currentView === 'catalog' && (
-           <div className="space-y-4">
+           <div className="space-y-4 animate-in fade-in duration-300">
               <input type="text" placeholder="搜尋食材..." className="w-full px-5 py-4 bg-white border border-[#E5D3BC] rounded-2xl text-sm font-bold shadow-sm outline-none" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
               <div className="flex overflow-x-auto gap-2 py-2">
                 {['全部', ...dynamicCategories].map(cat => (
@@ -396,7 +403,7 @@ const App: React.FC = () => {
         )}
 
         {currentView === 'cart' && (
-          <div className="space-y-6 pb-20">
+          <div className="space-y-6 pb-20 animate-in slide-in-from-right duration-300">
              <h2 className="text-2xl font-black text-[#4A3728]">我的購物車</h2>
              {cart.length === 0 ? (
                 <div className="py-20 text-center text-stone-300 font-bold">購物車是空的 🛒</div>
@@ -451,7 +458,7 @@ const App: React.FC = () => {
         )}
 
         {currentView === 'orders' && (
-           <div className="space-y-6 pb-20">
+           <div className="space-y-6 pb-20 animate-in fade-in duration-300">
               <div className="bg-[#F5E6D3] p-1 rounded-2xl flex border border-[#E5D3BC]">
                 {['ledger', 'list', 'summary'].map(v => (
                   <button key={v} onClick={() => setOrderSubView(v as any)} className={`flex-1 py-3 rounded-xl text-[11px] font-black transition-all ${orderSubView === v ? 'bg-[#8B7355] text-white shadow-md' : 'text-[#8B7355]'}`}>
@@ -460,54 +467,75 @@ const App: React.FC = () => {
                 ))}
               </div>
 
-              <div className="flex overflow-x-auto gap-2 mb-6">
+              <div className="flex overflow-x-auto gap-2 mb-6 hide-scrollbar">
                 {months.map(m => (
                   <button key={m} onClick={() => setSelectedMonth(m)} className={`px-5 py-2 rounded-full text-[11px] font-black whitespace-nowrap transition-all ${selectedMonth === m ? 'bg-[#8B7355] text-white' : 'bg-white border border-[#E5D3BC] text-stone-400'}`}>{m}</button>
                 ))}
               </div>
 
-              {orderSubView === 'ledger' ? (
-                <div className="space-y-6">
+              {/* 這裡使用嚴格的三元運算子分區渲染 */}
+              {orderSubView === 'ledger' && (
+                <div className="space-y-6" key="ledger-view">
                   <div className={`p-6 rounded-[2rem] text-white shadow-xl transition-colors ${monthlyProfit >= 0 ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-rose-500 shadow-rose-500/20'}`}>
                     <p className="text-[10px] font-black uppercase tracking-widest opacity-80">{selectedMonth} 預估損益</p>
                     <p className="text-3xl font-black">${Math.round(monthlyProfit * 100) / 100}</p>
+                    <div className="mt-4 pt-4 border-t border-white/20 grid grid-cols-2 gap-2 text-[10px] font-bold opacity-90">
+                      <div>總收入: ${monthlyIncome}</div>
+                      <div>總支出: ${monthlyExpenseManual + monthlyOrderTotal}</div>
+                    </div>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <button onClick={() => { setIsShowingLedgerForm(true); setLedgerForm({...ledgerForm, type: '收入', category: '店內收入'}); }} className="bg-[#E6FFFA] py-5 rounded-2xl border-2 border-[#B2F5EA] text-[#2C7A7B] font-black text-sm active:scale-95 transition-all">＋ 記錄收入</button>
                     <button onClick={() => { setIsShowingLedgerForm(true); setLedgerForm({...ledgerForm, type: '支出', category: '其他'}); }} className="bg-[#FFF5F5] py-5 rounded-2xl border-2 border-[#FED7D7] text-[#C53030] font-black text-sm active:scale-95 transition-all">－ 記錄支出</button>
                   </div>
                   <div className="space-y-4">
-                    <h5 className="text-[12px] font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full w-fit">本月明細</h5>
-                    {filteredLedger.map(l => (
-                      <div key={l.id} className={`bg-white p-5 rounded-3xl border border-[#E5D3BC] flex justify-between items-center border-l-[10px] ${l.type === '收入' ? 'border-l-emerald-500' : 'border-l-rose-500'}`}>
-                         <div><p className="text-[9px] font-black text-stone-300">{l.date}</p><h6 className="text-base font-black text-[#4A3728]">{l.category}</h6></div>
-                         <span className={`text-xl font-black ${l.type === '收入' ? 'text-emerald-600' : 'text-rose-600'}`}>{l.type === '收入' ? '+' : '-'}${l.amount}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : orderSubView === 'list' ? (
-                <div className="space-y-4">
-                   {isLoadingOrders ? <p className="py-20 text-center animate-pulse text-[#8B7355] font-black text-xs uppercase tracking-widest">同步試算表中...</p> : 
-                      filteredOrders.map(order => (
-                        <div key={order.id} onClick={() => { setSelectedOrder(order); setCheckedItems(new Set()); }} className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm space-y-3 border-l-[8px] border-l-[#8B7355] active:scale-[0.98] transition-all cursor-pointer">
-                           <div className="flex justify-between items-start"><p className="text-[10px] font-black text-stone-400 uppercase tracking-tighter">{order.date} | #{order.id.slice(-6)}</p><span className="text-[9px] font-black bg-[#F5E6D3] text-[#8B7355] px-2.5 py-1 rounded-full uppercase tracking-widest">{order.status}</span></div>
-                           <p className="text-xs font-medium text-stone-500 leading-relaxed bg-stone-50 p-3 rounded-xl border border-stone-100 line-clamp-2">{order.itemsSummary}</p>
-                           <div className="flex justify-between items-center pt-1"><span className="text-[10px] font-black text-[#8B7355]/40 uppercase tracking-widest">點擊核對品項 📋</span><span className="text-xl font-black text-[#8B7355] tracking-tight">${order.total}</span></div>
+                    <h5 className="text-[12px] font-black text-[#8B7355] bg-[#F5E6D3] px-3 py-1 rounded-full w-fit">本月明細 (不含叫貨)</h5>
+                    {filteredLedger.length > 0 ? (
+                      filteredLedger.map(l => (
+                        <div key={l.id} className={`bg-white p-5 rounded-3xl border border-[#E5D3BC] flex justify-between items-center border-l-[10px] ${l.type === '收入' ? 'border-l-emerald-500' : 'border-l-rose-500'}`}>
+                           <div><p className="text-[9px] font-black text-stone-300">{l.date}</p><h6 className="text-base font-black text-[#4A3728]">{l.category}</h6></div>
+                           <span className={`text-xl font-black ${l.type === '收入' ? 'text-emerald-600' : 'text-rose-600'}`}>{l.type === '收入' ? '+' : '-'}${l.amount}</span>
                         </div>
                       ))
+                    ) : (
+                      <p className="text-center py-10 text-stone-300 font-bold text-xs">目前無手動收支紀錄</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {orderSubView === 'list' && (
+                <div className="space-y-4" key="order-list-view">
+                   {isLoadingOrders ? <p className="py-20 text-center animate-pulse text-[#8B7355] font-black text-xs uppercase tracking-widest">同步試算表中...</p> : 
+                      filteredOrders.length > 0 ? (
+                        filteredOrders.map(order => (
+                          <div key={order.id} onClick={() => { setSelectedOrder(order); setCheckedItems(new Set()); }} className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm space-y-3 border-l-[8px] border-l-[#8B7355] active:scale-[0.98] transition-all cursor-pointer">
+                             <div className="flex justify-between items-start"><p className="text-[10px] font-black text-stone-400 uppercase tracking-tighter">{order.date} | #{order.id.slice(-6)}</p><span className="text-[9px] font-black bg-[#F5E6D3] text-[#8B7355] px-2.5 py-1 rounded-full uppercase tracking-widest">{order.status}</span></div>
+                             <p className="text-xs font-medium text-stone-500 leading-relaxed bg-stone-50 p-3 rounded-xl border border-stone-100 line-clamp-2">{order.itemsSummary}</p>
+                             <div className="flex justify-between items-center pt-1"><span className="text-[10px] font-black text-[#8B7355]/40 uppercase tracking-widest">點擊核對品項 📋</span><span className="text-xl font-black text-[#8B7355] tracking-tight">${order.total}</span></div>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-center py-10 text-stone-300 font-bold text-xs">本月無叫貨清單</p>
+                      )
                    }
                 </div>
-              ) : (
-                <div className="space-y-4">
+              )}
+
+              {orderSubView === 'summary' && (
+                <div className="space-y-4" key="summary-view">
                    <div className="bg-white rounded-[2.5rem] border border-[#E5D3BC] overflow-hidden">
                         <div className="bg-[#FDFBF7] px-6 py-4 border-b border-[#E5D3BC] flex justify-between text-[11px] font-black text-[#8B7355]"><span>食材項目</span><span>累計總量</span></div>
-                        {itemAggregation.map((item, idx) => (
-                          <div key={idx} className="px-6 py-4 flex justify-between items-center border-b border-stone-50">
-                            <span className="text-sm font-black text-[#4A3728]">{item.name}</span>
-                            <span className="text-lg font-black text-[#8B7355]">{item.total}</span>
-                          </div>
-                        ))}
+                        {itemAggregation.length > 0 ? (
+                          itemAggregation.map((item, idx) => (
+                            <div key={idx} className="px-6 py-4 flex justify-between items-center border-b border-stone-50">
+                              <span className="text-sm font-black text-[#4A3728]">{item.name}</span>
+                              <span className="text-lg font-black text-[#8B7355]">{item.total}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-center py-10 text-stone-300 font-bold text-xs uppercase tracking-widest">本月無品項數據</p>
+                        )}
                     </div>
                 </div>
               )}
@@ -516,7 +544,7 @@ const App: React.FC = () => {
 
         {isShowingLedgerForm && (
           <div className="fixed inset-0 z-[60] flex items-center justify-center p-6 bg-black/40 backdrop-blur-[2px]">
-            <div className="bg-white w-full max-sm rounded-[2.5rem] p-8 space-y-4 border-[3px] border-[#8B7355] shadow-2xl">
+            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 space-y-4 border-[3px] border-[#8B7355] shadow-2xl">
               <h4 className="text-xl font-black text-[#8B7355]">新增{ledgerForm.type}紀錄</h4>
               <form onSubmit={handleSubmitLedger} className="space-y-4">
                 <input required type="date" className="w-full px-5 py-4 bg-[#F8F8F8] rounded-2xl border-none font-bold" value={ledgerForm.date} onChange={e => setLedgerForm({...ledgerForm, date: e.target.value})} />
