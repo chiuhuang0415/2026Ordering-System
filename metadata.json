@@ -1,5 +1,7 @@
 {
   "name": "大葛格鹹水雞",
   "description": "專業的手機端加盟商下單系統，專為大葛格鹹水雞門店設計。",
-  "requestFramePermissions": []
+  "requestFramePermissions": [
+    "geolocation"
+  ]
 }

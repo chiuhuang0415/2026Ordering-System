@@ -1,6 +1,8 @@
-
 import { Product, Category, User, Order, NewsItem, OrderStatus, LedgerEntry } from "../types";
 
+/**
+ * 欄位值抓取工具：不論大小寫、前後空白或中英標題都能抓到
+ */
 const getValueByKeys = (obj: any, keys: string[]) => {
   if (!obj) return undefined;
   const objKeys = Object.keys(obj);
@@ -13,15 +15,53 @@ const getValueByKeys = (obj: any, keys: string[]) => {
   return undefined;
 };
 
+/**
+ * 強健的數字轉換：移除 $、, 等非數字符號
+ */
+const parseRobustNumber = (val: any): number => {
+  if (val === undefined || val === null || val === "") return 0;
+  if (typeof val === 'number') return val;
+  const cleanStr = String(val).replace(/[^\d.-]/g, '');
+  const num = parseFloat(cleanStr);
+  return isNaN(num) ? 0 : num;
+};
+
 const safeJsonParse = (text: string) => {
   try {
     if (!text || text.trim() === "") return null;
-    const trimmedText = text.trim();
-    if (trimmedText === "Invalid Action" || trimmedText === "Error") return null;
-    if (trimmedText.startsWith('<')) return null;
-    return JSON.parse(text);
+    const trimmed = text.trim();
+    if (trimmed.startsWith('<')) return null; // 避免抓到 HTML 錯誤頁面
+    return JSON.parse(trimmed);
   } catch (e) {
     return null;
+  }
+};
+
+/**
+ * 登入驗證：對應 GAS 的 action: login
+ */
+export const loginToSheet = async (apiUrl: string, id: string, password: string): Promise<{ success: boolean; user?: User; message?: string }> => {
+  try {
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'login', id, password }),
+      redirect: 'follow'
+    });
+    const text = await response.text();
+    const result = safeJsonParse(text);
+    if (result && result.status === "Success" && result.user) {
+      return {
+        success: true,
+        user: {
+          username: (result.user.username || "").toString(),
+          franchiseName: result.user.franchiseName || "加盟商"
+        }
+      };
+    }
+    return { success: false, message: result?.message || "登入失敗" };
+  } catch (error) {
+    return { success: false, message: "連線異常" };
   }
 };
 
@@ -31,10 +71,9 @@ export const fetchNewsFromSheet = async (apiUrl: string): Promise<NewsItem[]> =>
     const response = await fetch(`${apiUrl}?action=getNews`);
     const text = await response.text();
     const result = safeJsonParse(text);
-    if (!result) return [];
-    const data = Array.isArray(result) ? result : (result.data || []);
-    return data.map((item: any) => ({
-      title: getValueByKeys(item, ['title', '標題']) || "無標題公告",
+    if (!result || !Array.isArray(result)) return [];
+    return result.map((item: any) => ({
+      title: getValueByKeys(item, ['title', '標題']) || "公告",
       content: getValueByKeys(item, ['content', '內容']) || "",
       date: getValueByKeys(item, ['date', '日期']) || ""
     }));
@@ -49,13 +88,12 @@ export const fetchProductsFromSheet = async (apiUrl: string): Promise<Product[]>
     const response = await fetch(`${apiUrl}?action=getProducts`);
     const text = await response.text();
     const result = safeJsonParse(text);
-    if (!result) return [];
-    const data = Array.isArray(result) ? result : (result.data || []);
-    return data.map((item: any, index: number) => ({
+    if (!result || !Array.isArray(result)) return [];
+    return result.map((item: any, index: number) => ({
       id: (getValueByKeys(item, ['id', '商品編號', '編號']) || `P-${index}`).toString(),
       name: getValueByKeys(item, ['name', '品名', '商品名稱']) || "未命名商品",
-      price: Number(getValueByKeys(item, ['price', '單價', '價格'])) || 0,
-      minUnit: Number(getValueByKeys(item, ['minUnit', '最小單位', '起訂量'])) || 1,
+      price: parseRobustNumber(getValueByKeys(item, ['price', '單價', '價格'])),
+      minUnit: parseRobustNumber(getValueByKeys(item, ['minUnit', '最小單位', '起訂量'])) || 1,
       unit: getValueByKeys(item, ['unit', '單位']) || "個",
       category: (getValueByKeys(item, ['category', '分類']) as Category) || "食材",
       image: `https://loremflickr.com/400/400/food?lock=${index}`
@@ -65,55 +103,65 @@ export const fetchProductsFromSheet = async (apiUrl: string): Promise<Product[]>
   }
 };
 
-export const fetchUsersFromSheet = async (apiUrl: string): Promise<User[]> => {
-  if (!apiUrl) return [];
-  try {
-    const response = await fetch(`${apiUrl}?action=getUsers`);
-    const text = await response.text();
-    const result = safeJsonParse(text);
-    if (!result) return [];
-    const data = Array.isArray(result) ? result : (result.data || []);
-    return data.map((u: any) => ({
-      username: (getValueByKeys(u, ['username', '帳號']) || "").toString().trim(),
-      password: (getValueByKeys(u, ['password', '密碼']) || "").toString().trim(),
-      franchiseName: (getValueByKeys(u, ['franchiseName', '店名', '店家名稱']) || "未知加盟商").toString().trim()
-    }));
-  } catch (error) {
-    return [];
-  }
-};
-
+/**
+ * 讀取歷史：呼叫 action=getHistory (Shipped_History 表)
+ */
 export const fetchOrderHistoryFromSheet = async (apiUrl: string, franchiseName: string): Promise<Order[]> => {
   if (!apiUrl) return [];
   try {
     const response = await fetch(`${apiUrl}?action=getHistory`);
     const text = await response.text();
     const result = safeJsonParse(text);
-    if (!result) return [];
-    const data = Array.isArray(result) ? result : (result.data || []);
-    return data
+    if (!result || !Array.isArray(result)) return [];
+    
+    return result
       .filter((item: any) => {
         const name = getValueByKeys(item, ['franchiseName', '分店名稱', '店名']);
         return name && name.toString().trim() === franchiseName.trim();
       })
-      .map((item: any) => {
-        let rawDate = getValueByKeys(item, ['date', '日期']) || "";
-        let formattedDate = rawDate.toString();
-        if (rawDate instanceof Date || !isNaN(Date.parse(rawDate))) {
-           const d = new Date(rawDate);
-           formattedDate = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}`;
-        }
-        return {
-          id: (getValueByKeys(item, ['order', '訂單編號', '編號']) || "").toString(),
-          date: formattedDate,
-          total: Number(getValueByKeys(item, ['total', '金額', '總金額'])) || 0,
-          itemsSummary: getValueByKeys(item, ['items', '品項摘要', '內容']) || "",
-          franchiseName: franchiseName,
-          status: (getValueByKeys(item, ['status', '狀態']) as OrderStatus) || OrderStatus.COMPLETED,
-          items: [], 
-          deliveryDate: ""
-        };
-      });
+      .map((item: any) => ({
+        id: (getValueByKeys(item, ['order', '訂單編號', 'id']) || "").toString(),
+        date: (getValueByKeys(item, ['date', '日期']) || "").toString(),
+        total: parseRobustNumber(getValueByKeys(item, ['金額', 'amount', 'total'])),
+        itemsSummary: getValueByKeys(item, ['items', '品項摘要', 'summary']) || "",
+        franchiseName: franchiseName,
+        status: (getValueByKeys(item, ['status', '狀態']) as OrderStatus) || OrderStatus.COMPLETED,
+        items: [], 
+        deliveryDate: ""
+      })).reverse();
+  } catch (error) {
+    return [];
+  }
+};
+
+/**
+ * 讀取待處理訂單：呼叫 action=getOrders (Orders 表)
+ */
+export const fetchActiveOrdersFromSheet = async (apiUrl: string, franchiseName: string): Promise<Order[]> => {
+  if (!apiUrl) return [];
+  try {
+    const response = await fetch(`${apiUrl}?action=getOrders`);
+    const text = await response.text();
+    const result = safeJsonParse(text);
+    if (!result || !Array.isArray(result)) return [];
+    
+    return result
+      .filter((item: any) => {
+        const name = getValueByKeys(item, ['franchiseName', '分店名稱', '店名']);
+        return name && name.toString().trim() === franchiseName.trim();
+      })
+      .map((item: any) => ({
+        id: (getValueByKeys(item, ['order', '訂單編號', 'id']) || "").toString(),
+        date: (getValueByKeys(item, ['date', '日期']) || "").toString(),
+        total: parseRobustNumber(getValueByKeys(item, ['金額', 'amount', 'total'])),
+        itemsSummary: getValueByKeys(item, ['items', '品項摘要', 'summary']) || "",
+        franchiseName: franchiseName,
+        status: (getValueByKeys(item, ['status', '狀態']) as OrderStatus) || OrderStatus.PENDING,
+        items: [], 
+        deliveryDate: ""
+      }))
+      .filter((order: Order) => order.status === OrderStatus.PENDING)
+      .reverse();
   } catch (error) {
     return [];
   }
@@ -125,47 +173,51 @@ export const fetchLedgerFromSheet = async (apiUrl: string, franchiseName: string
     const response = await fetch(`${apiUrl}?action=getLedger`);
     const text = await response.text();
     const result = safeJsonParse(text);
-    if (!result) return [];
-    const data = Array.isArray(result) ? result : (result.data || []);
-    return data
+    if (!result || !Array.isArray(result)) return [];
+    return result
       .filter((item: any) => {
-        const name = getValueByKeys(item, ['franchiseName', '分店名稱', '店名']);
+        const name = getValueByKeys(item, ['分店名稱', '店名', 'franchiseName']);
         return name && name.toString().trim() === franchiseName.trim();
       })
       .map((item: any) => ({
         id: (getValueByKeys(item, ['id', '編號']) || "").toString(),
-        date: (getValueByKeys(item, ['date', '日期']) || "").toString(),
+        date: (getValueByKeys(item, ['日期', 'date']) || "").toString(),
         franchiseName: franchiseName,
-        type: getValueByKeys(item, ['type', '類型']) || '支出',
-        category: getValueByKeys(item, ['category', '項目']) || "",
-        amount: Number(getValueByKeys(item, ['amount', '金額'])) || 0,
-        note: getValueByKeys(item, ['note', '備註']) || ""
+        type: getValueByKeys(item, ['類型', 'type']) || '支出',
+        category: getValueByKeys(item, ['項目', 'category']) || "",
+        amount: parseRobustNumber(getValueByKeys(item, ['金額', 'amount'])),
+        note: getValueByKeys(item, ['備註', 'note']) || ""
       }));
   } catch (error) {
     return [];
   }
 };
 
+/**
+ * 提交叫貨單
+ */
 export const submitOrderToSheet = async (apiUrl: string, order: Order, franchiseName: string): Promise<boolean> => {
   if (!apiUrl) return false;
   try {
     const payload = {
       action: 'submitOrder',
-      order: order.id,
-      date: new Date().toLocaleDateString('zh-TW'),
+      id: order.id,
+      date: new Date().toLocaleString('zh-TW', { hour12: true }),
       franchiseName: franchiseName,
-      items: order.items.map(i => `${i.name}*${i.quantity}`).join(', '),
-      status: order.status,
-      total: order.total
+      items: order.items.map(i => `${i.id}*${i.quantity}`).join(', '),
+      status: order.status
     };
-    await fetch(apiUrl, {
+    
+    const res = await fetch(apiUrl, {
       method: 'POST',
-      mode: 'no-cors',
-      cache: 'no-cache',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      redirect: 'follow'
     });
-    return true;
+    
+    const text = await res.text();
+    const result = safeJsonParse(text);
+    return result?.status === "Success";
   } catch (error) {
     return false;
   }
@@ -178,97 +230,16 @@ export const submitLedgerToSheet = async (apiUrl: string, entry: LedgerEntry): P
       action: 'submitLedger',
       ...entry
     };
-    await fetch(apiUrl, {
+    const res = await fetch(apiUrl, {
       method: 'POST',
-      mode: 'no-cors',
-      cache: 'no-cache',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(payload),
+      redirect: 'follow'
     });
-    return true;
+    const text = await res.text();
+    const result = safeJsonParse(text);
+    return result?.status === "Success";
   } catch (error) {
     return false;
   }
 };
-
-/**
- * 💡 請直接複製下方內容，替換掉 Google Apps Script 中的所有程式碼
- * ------------------------------------------------------------------
- * 
- * function doGet(e) {
- *   var action = e.parameter.action;
- *   var ss = SpreadsheetApp.getActiveSpreadsheet();
- *   
- *   if (action === 'getProducts' || !action) return getSheetData(ss, 'Products'); 
- *   if (action === 'getUsers') return getSheetData(ss, 'Users'); 
- *   if (action === 'getNews') return getSheetData(ss, 'News'); 
- *   if (action === 'getHistory') return getSheetData(ss, 'Shipped_History'); 
- *   if (action === 'getLedger') return getSheetData(ss, 'Ledger'); 
- *   
- *   return ContentService.createTextOutput("Invalid Action").setMimeType(ContentService.MimeType.TEXT);
- * }
- * 
- * function doPost(e) {
- *   var ss = SpreadsheetApp.getActiveSpreadsheet();
- *   var data;
- *   try {
- *     data = JSON.parse(e.postData.contents);
- *   } catch(err) {
- *     return createJsonResponse({status: "Error", message: "JSON 解析錯誤"});
- *   }
- *   
- *   var action = data.action;
- *   
- *   try {
- *     // 處理：新增收支紀錄
- *     if (action === 'submitLedger') {
- *       var sheet = ss.getSheetByName('Ledger') || ss.insertSheet('Ledger');
- *       if (sheet.getLastRow() === 0) {
- *         sheet.appendRow(['id', 'date', 'franchiseName', 'type', 'category', 'amount', 'note']);
- *         sheet.getRange(1, 1, 1, 7).setFontWeight("bold").setBackground("#F5E6D3");
- *       }
- *       sheet.appendRow([data.id, data.date, data.franchiseName, data.type, data.category, data.amount, data.note]);
- *       return createJsonResponse({status: "Success"});
- *     }
- * 
- *     // 處理：新增叫貨訂單
- *     if (action === 'submitOrder') {
- *       var sheet = ss.getSheetByName('Orders') || ss.insertSheet('Orders');
- *       if (sheet.getLastRow() === 0) {
- *         sheet.appendRow(['order', 'date', 'franchiseName', 'items', 'status', 'total']);
- *       }
- *       sheet.appendRow([data.order, data.date, data.franchiseName, data.items, data.status, data.total]);
- *       return createJsonResponse({status: "Success"});
- *     }
- *     
- *     return createJsonResponse({status: "Error", message: "找不到動作"});
- *   } catch(err) {
- *     return createJsonResponse({status: "Error", message: err.message});
- *   }
- * }
- * 
- * function getSheetData(ss, sheetName) {
- *   var sheet = ss.getSheetByName(sheetName);
- *   if (!sheet) return createJsonResponse([]);
- *   
- *   var data = sheet.getDataRange().getValues();
- *   if (data.length <= 1) return createJsonResponse([]);
- *   
- *   var headers = data[0];
- *   var rows = data.slice(1);
- *   
- *   var result = rows.map(function(row) {
- *     var obj = {};
- *     headers.forEach(function(header, i) {
- *       obj[header.toString().trim()] = row[i];
- *     });
- *     return obj;
- *   });
- *   return createJsonResponse(result);
- * }
- * 
- * function createJsonResponse(data) {
- *   return ContentService.createTextOutput(JSON.stringify(data))
- *     .setMimeType(ContentService.MimeType.JSON);
- * }
- */

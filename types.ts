@@ -3,8 +3,9 @@ export type Category = '蔬菜' | '肉品、內臟' | '食材' | '包材' | '飲
 
 export interface User {
   username: string;
-  password: string;
+  password?: string;
   franchiseName: string;
+  role?: string;
 }
 
 export interface NewsItem {
