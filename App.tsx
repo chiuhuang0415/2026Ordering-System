@@ -39,6 +39,10 @@ const App: React.FC = () => {
   
   const [orderSubView, setOrderSubView] = useState<'ledger' | 'list' | 'summary'>('ledger');
 
+  // 盤點相關狀態
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [checkedItems, setCheckedItems] = useState<Set<string>>(new Set());
+
   const [isShowingLedgerForm, setIsShowingLedgerForm] = useState(false);
   const [ledgerForm, setLedgerForm] = useState({
     type: '收入' as '收入' | '支出',
@@ -289,6 +293,24 @@ const App: React.FC = () => {
     return `${y}年${parseInt(m)}月${parseInt(d)}日`;
   };
 
+  // 解析品項摘要為陣列
+  const parsedItems = useMemo(() => {
+    if (!selectedOrder?.itemsSummary) return [];
+    return selectedOrder.itemsSummary.split(', ').map(s => {
+      const [name, qty] = s.split('*');
+      return { name: name.trim(), qty: qty.trim() };
+    });
+  }, [selectedOrder]);
+
+  const toggleCheck = (itemName: string) => {
+    setCheckedItems(prev => {
+      const next = new Set(prev);
+      if (next.has(itemName)) next.delete(itemName);
+      else next.add(itemName);
+      return next;
+    });
+  };
+
   if (isInitializing) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-[#FDFBF7]">
@@ -456,7 +478,7 @@ const App: React.FC = () => {
 
               {orderSubView === 'ledger' ? (
                 <div className="space-y-6 relative">
-                  {/* 盈餘看板 - 簡化資訊 */}
+                  {/* 盈餘看板 */}
                   <div className={`p-6 rounded-[2rem] text-white shadow-xl relative overflow-hidden transition-colors ${monthlyProfit >= 0 ? 'bg-emerald-500 shadow-emerald-500/20' : 'bg-rose-500 shadow-rose-500/20'}`}>
                     <div className="relative z-10 flex justify-between items-center">
                       <div>
@@ -566,7 +588,7 @@ const App: React.FC = () => {
                   )}
 
                   <div className="space-y-8">
-                    {/* 收入清單區塊 - 標題旁顯示累計 */}
+                    {/* 收入清單區塊 */}
                     <div className="space-y-3">
                       <div className="flex justify-between items-center px-1">
                         <h5 className="text-[12px] font-black text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-widest border border-emerald-100">本月收入清單</h5>
@@ -587,14 +609,13 @@ const App: React.FC = () => {
                       )}
                     </div>
 
-                    {/* 支出清單區塊 - 標題旁顯示累計 */}
+                    {/* 支出清單區塊 */}
                     <div className="space-y-3">
                       <div className="flex justify-between items-center px-1">
                         <h5 className="text-[12px] font-black text-rose-600 bg-rose-50 px-3 py-1 rounded-full uppercase tracking-widest border border-rose-100">本月支出清單</h5>
                         <span className="text-[12px] font-black text-rose-600">累計: ${Math.round(monthlyTotalExpense * 100) / 100}</span>
                       </div>
                       
-                      {/* 自動匯入項目：叫貨支出 */}
                       {monthlyOrderTotal > 0 && (
                         <div className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm flex justify-between items-center border-l-[10px] border-l-rose-500">
                            <div>
@@ -606,7 +627,6 @@ const App: React.FC = () => {
                         </div>
                       )}
 
-                      {/* 手動輸入項目 */}
                       {filteredLedger.filter(l => l.type === '支出').map(l => (
                         <div key={l.id} className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm flex justify-between items-center border-l-[10px] border-l-rose-500">
                            <div>
@@ -639,14 +659,18 @@ const App: React.FC = () => {
 
                    {isLoadingOrders ? <p className="py-20 text-center animate-pulse text-[#8B7355] font-black text-xs uppercase tracking-widest">同步試算表中...</p> : 
                       filteredOrders.map(order => (
-                        <div key={order.id} className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm space-y-3 border-l-[8px] border-l-[#8B7355] active:scale-[0.98] transition-all">
+                        <div 
+                          key={order.id} 
+                          onClick={() => { setSelectedOrder(order); setCheckedItems(new Set()); }}
+                          className="bg-white p-5 rounded-3xl border border-[#E5D3BC] shadow-sm space-y-3 border-l-[8px] border-l-[#8B7355] active:scale-[0.98] transition-all cursor-pointer"
+                        >
                            <div className="flex justify-between items-start">
                               <p className="text-[10px] font-black text-stone-400 uppercase tracking-tighter">{order.date} | #{order.id.slice(-6)}</p>
                               <span className="text-[9px] font-black bg-[#F5E6D3] text-[#8B7355] px-2.5 py-1 rounded-full uppercase tracking-widest">{order.status}</span>
                            </div>
                            <p className="text-xs font-medium text-stone-500 leading-relaxed line-clamp-2 bg-stone-50 p-3 rounded-xl border border-stone-100">{order.itemsSummary}</p>
                            <div className="flex justify-between items-center pt-1">
-                              <span className="text-xs font-black text-[#8B7355] uppercase tracking-widest">單筆金額</span>
+                              <span className="text-[10px] font-black text-[#8B7355]/40 uppercase tracking-widest">點擊展開盤點清單 📋</span>
                               <span className="text-xl font-black text-[#8B7355] tracking-tight">${order.total}</span>
                            </div>
                         </div>
@@ -680,6 +704,69 @@ const App: React.FC = () => {
            </div>
         )}
       </main>
+
+      {/* 到貨盤點 Overlay */}
+      {selectedOrder && (
+        <div className="fixed inset-0 z-[100] bg-[#FDFBF7] flex flex-col animate-in slide-in-from-bottom duration-300">
+           <header className="px-6 py-6 border-b border-[#E5D3BC] bg-white flex justify-between items-end">
+              <div>
+                <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-1">到貨核對清單</p>
+                <h2 className="text-xl font-black text-[#4A3728]">訂單 #{selectedOrder.id.slice(-6)}</h2>
+                <p className="text-[11px] font-bold text-[#8B7355] mt-1 tracking-tight">{selectedOrder.date} 叫貨</p>
+              </div>
+              <button 
+                onClick={() => setSelectedOrder(null)}
+                className="w-12 h-12 rounded-2xl bg-stone-100 flex items-center justify-center text-stone-400 active:scale-90 transition-all"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+           </header>
+           
+           <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+              <div className="bg-[#8B7355] p-5 rounded-3xl text-white shadow-xl flex justify-between items-center relative overflow-hidden">
+                 <div className="relative z-10">
+                    <p className="text-[10px] font-black opacity-80 uppercase tracking-widest">盤點進度</p>
+                    <p className="text-2xl font-black mt-0.5">{checkedItems.size} / {parsedItems.length}</p>
+                 </div>
+                 <div className="w-24 h-2 bg-white/20 rounded-full overflow-hidden relative z-10">
+                    <div 
+                      className="h-full bg-white transition-all duration-500" 
+                      style={{ width: `${(checkedItems.size / parsedItems.length) * 100}%` }}
+                    />
+                 </div>
+                 <div className="absolute -right-4 -bottom-4 text-white/10 text-7xl font-black select-none">CHECK</div>
+              </div>
+
+              <div className="space-y-3">
+                 {parsedItems.map((item, idx) => (
+                   <div 
+                    key={idx} 
+                    onClick={() => toggleCheck(item.name)}
+                    className={`p-5 rounded-2xl border transition-all duration-200 flex items-center gap-4 ${checkedItems.has(item.name) ? 'bg-stone-50 border-stone-200 opacity-60' : 'bg-white border-[#E5D3BC] shadow-sm'}`}
+                   >
+                      <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center transition-colors ${checkedItems.has(item.name) ? 'bg-emerald-500 border-emerald-500 text-white' : 'border-[#E5D3BC] text-transparent'}`}>
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                      </div>
+                      <div className="flex-1">
+                         <h4 className={`text-base font-black transition-all ${checkedItems.has(item.name) ? 'text-stone-400 line-through' : 'text-[#4A3728]'}`}>{item.name}</h4>
+                         <p className={`text-sm font-bold mt-0.5 ${checkedItems.has(item.name) ? 'text-stone-300' : 'text-[#8B7355]'}`}>數量：{item.qty}</p>
+                      </div>
+                   </div>
+                 ))}
+              </div>
+           </div>
+
+           <div className="p-6 bg-white border-t border-[#E5D3BC] pb-10">
+              <button 
+                onClick={() => setSelectedOrder(null)}
+                className="w-full bg-[#8B7355] text-white py-5 rounded-2xl font-black text-lg shadow-xl active:scale-95 transition-all"
+              >
+                完成盤點
+              </button>
+           </div>
+        </div>
+      )}
+
       <Navigation currentView={currentView} onViewChange={setCurrentView} cartCount={cartItemCount} />
     </div>
   );
